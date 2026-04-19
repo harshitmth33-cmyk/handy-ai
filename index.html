@@ -1,0 +1,175 @@
+<!DOCTYPE html><html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Handy AI V3</title><link href="https://fonts.googleapis.com/css2?family=Syne:wght@800&family=DM+Mono&display=swap" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script><script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script><style>
+body{margin:0;background:#03020a;color:#fff;overflow:hidden;font-family:'DM Mono'}
+canvas,video{position:fixed;inset:0;width:100%;height:100%}
+video{transform:scaleX(-1);filter:brightness(0.5)}
+</style></head><body><video id="video" autoplay playsinline></video>
+<canvas id="fx"></canvas>
+<canvas id="draw"></canvas>
+
+<script>
+let video=document.getElementById("video");
+let fx=document.getElementById("fx");
+let ctx=fx.getContext("2d");
+
+let drawCanvas=document.getElementById("draw");
+let dctx=drawCanvas.getContext("2d");
+
+let particles=[];
+let path=[];
+
+/* Resize */
+function resize(){
+  fx.width=innerWidth; fx.height=innerHeight;
+  drawCanvas.width=innerWidth; drawCanvas.height=innerHeight;
+}
+resize(); onresize=resize;
+
+/* AUDIO FIX */
+let audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+document.body.addEventListener("click", ()=>{
+  if(audioCtx.state==="suspended") audioCtx.resume();
+});
+function zap(){
+  let o=audioCtx.createOscillator();
+  let g=audioCtx.createGain();
+  o.type="sawtooth";
+  o.frequency.setValueAtTime(700,audioCtx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(40,audioCtx.currentTime+0.1);
+  g.gain.value=0.2;
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime+0.1);
+}
+
+/* PARTICLES */
+function spawn(x,y){
+  for(let i=0;i<3;i++){
+    particles.push({x,y,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:30});
+  }
+}
+function drawParticles(){
+  particles.forEach(p=>{
+    p.x+=p.vx; p.y+=p.vy; p.life--;
+    ctx.globalAlpha=p.life/30;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,2,0,Math.PI*2);
+    ctx.fillStyle="hsl("+Date.now()%360+",100%,70%)";
+    ctx.fill();
+  });
+  particles=particles.filter(p=>p.life>0);
+  ctx.globalAlpha=1;
+}
+
+/* HANDS */
+let hands=new Hands({
+  locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+});
+
+hands.setOptions({
+  maxNumHands:2,
+  modelComplexity:1,
+  minDetectionConfidence:0.7,
+  minTrackingConfidence:0.7
+});
+
+hands.onResults(res=>{
+  /* TRAIL FADE */
+  ctx.fillStyle="rgba(0,0,0,0.2)";
+  ctx.fillRect(0,0,fx.width,fx.height);
+
+  if(!res.multiHandLandmarks) return;
+
+  let tips=[];
+
+  res.multiHandLandmarks.forEach(hand=>{
+    let i=hand[8];
+    let t=hand[4];
+
+    let x=i.x*fx.width;
+    let y=i.y*fx.height;
+
+    tips.push({x,y});
+
+    /* glow finger */
+    ctx.beginPath();
+    ctx.arc(x,y,10,0,Math.PI*2);
+    ctx.fillStyle="cyan";
+    ctx.shadowBlur=20;
+    ctx.shadowColor="cyan";
+    ctx.fill();
+    ctx.shadowBlur=0;
+
+    spawn(x,y);
+
+    path.push({x,y});
+
+    /* pinch */
+    let d=Math.hypot(t.x-i.x,t.y-i.y);
+    if(d<0.05){
+      zap();
+      spawn(x,y);
+    }
+  });
+
+  /* lightning */
+  if(tips.length==2){
+    ctx.beginPath();
+    ctx.moveTo(tips[0].x,tips[0].y);
+
+    for(let i=0;i<10;i++){
+      let t=i/10;
+      let x=tips[0].x+(tips[1].x-tips[0].x)*t + (Math.random()-0.5)*20;
+      let y=tips[0].y+(tips[1].y-tips[0].y)*t + (Math.random()-0.5)*20;
+      ctx.lineTo(x,y);
+    }
+
+    ctx.lineTo(tips[1].x,tips[1].y);
+    ctx.strokeStyle="cyan";
+    ctx.lineWidth=3;
+    ctx.shadowBlur=20;
+    ctx.shadowColor="cyan";
+    ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+
+  drawParticles();
+
+  /* smooth draw */
+  dctx.clearRect(0,0,drawCanvas.width,drawCanvas.height);
+  dctx.beginPath();
+  dctx.lineWidth=6;
+  dctx.lineCap="round";
+  dctx.lineJoin="round";
+  dctx.shadowBlur=15;
+  dctx.shadowColor="cyan";
+
+  for(let i=1;i<path.length-1;i++){
+    let xc=(path[i].x+path[i+1].x)/2;
+    let yc=(path[i].y+path[i+1].y)/2;
+    dctx.quadraticCurveTo(path[i].x,path[i].y,xc,yc);
+  }
+
+  dctx.strokeStyle="cyan";
+  dctx.stroke();
+  dctx.shadowBlur=0;
+});
+
+/* START CAMERA (LOW RES = SMOOTH) */
+async function start(){
+  let stream=await navigator.mediaDevices.getUserMedia({
+    video:{width:640,height:480}
+  });
+  video.srcObject=stream;
+
+  const cam=new Camera(video,{
+    onFrame:async()=>await hands.send({image:video}),
+    width:640,height:480
+  });
+  cam.start();
+}
+start();
+</script></body>
+</html>
